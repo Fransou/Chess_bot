@@ -1,1 +1,1 @@
-ué
+Chess bot
