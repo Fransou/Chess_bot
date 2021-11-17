@@ -1,13 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import keras as k
-
-from keras.models import Sequential
-import keras.layers as layers
-from keras import backend as K
-
-
-
 
 class ChessBoard:
 

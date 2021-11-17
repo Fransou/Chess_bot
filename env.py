@@ -2,9 +2,8 @@ import imp
 import gym
 from gym import spaces
 import numpy as np
-from game import *
 import chess
-
+from game import *
 max_states = 80
 
 class Chess_env(gym.Env):
@@ -159,7 +158,7 @@ class Chess_env(gym.Env):
                     obs = self._next_observation()
                     y.append(
                         np.sum(
-                            np.sum(obs[0], axis=0) * (1-self.board_feat.board),
+                            np.sum(obs[0], axis=0) * (1-np.sign(np.abs(self.board_feat.board))),
                             axis=2
                         )
                     )
@@ -169,3 +168,4 @@ class Chess_env(gym.Env):
                     break
 
         return [np.array(X_b), np.array(X_of)], np.array(y)
+

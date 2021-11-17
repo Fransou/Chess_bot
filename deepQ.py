@@ -49,24 +49,34 @@ class DeepQ():
     def create_head(self):
         inputs = layers.Input(shape=(8, 8, 7,))
         inp = layers.Input(shape=(4,))
+        multiplicator = layers.Input(shape=(1,))
+
 
         x = layers.Flatten()(inputs)
         x = layers.Concatenate()([x,inp])
 
-        x = layers.Dense(256, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
+        x_white = layers.Dense(128, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)  
+        x_black = layers.Dense(128, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)  
+        x = x_white * (1+multiplicator)/2 + (1-multiplicator)/2*x_black
+        x = layers.Dropout(rate=self.dropout_rate)(x)
+        
+        x = layers.Dense(128, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
         x = layers.BatchNormalization()(x)
         x = layers.Dropout(rate=self.dropout_rate)(x)
 
-        
         x = layers.Dense(64, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
         x = layers.BatchNormalization()(x)
         x = layers.Dropout(rate=self.dropout_rate)(x)
 
-        x = layers.Dense(64, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)  
+        x = layers.Dense(64, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
         x = layers.BatchNormalization()(x)
         x = layers.Dropout(rate=self.dropout_rate)(x)
 
-        return keras.Model(inputs=[inputs, inp], outputs=x)
+        x = layers.Dense(64, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
+        x = layers.BatchNormalization()(x)
+        x = layers.Dropout(rate=self.dropout_rate)(x)
+
+        return keras.Model(inputs=[inputs, inp, multiplicator], outputs=x)
 
 
 
@@ -76,7 +86,7 @@ class DeepQ():
         inputs2 = layers.Input(shape=(4,))
         multiplicator = layers.Input(shape=(1,))
 
-        x = head([inputs1,inputs2])
+        x = head([inputs1,inputs2,multiplicator])
 
         out = layers.Dense(32, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)
         out = layers.Dropout(rate=self.dropout_rate)(out)
@@ -286,13 +296,14 @@ class DeepQ():
     def create_pretraining_head(self):
         inputs = layers.Input(shape=(8,8,7))
         inp = layers.Input(shape = (4,))
+        mult = layers.Input(shape = (1,))
 
-        x = self.head([inputs,inp])
+        x = self.head([inputs,inp,mult])
 
-        x = layers.Dense(64, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)
+        x = layers.Dense(64, activation="linear",kernel_regularizer=regularizers.l2(self.L2_reg))(x)
         x = layers.Dropout(rate=self.dropout_rate)(x)
 
-        return keras.Model(inputs=[inputs,inp], outputs=x)  
+        return keras.Model(inputs=[inputs,inp,mult], outputs=x)  
 
 
     def pretrain(self,X,y,X_test,y_test, lr=1e-4, max_iter=500):
@@ -312,12 +323,14 @@ class DeepQ():
             for it in range(n_samples//batch_size):
                 ind = np.arange(0,n_samples).astype('int32')
                 np.random.shuffle(ind)
-                tensor_X_0 = tf.convert_to_tensor(X[0][ind[:batch_size]])
-                tensor_X_1 = tf.convert_to_tensor(X[1][ind[:batch_size]])
-                tensor_y = tf.convert_to_tensor(y[ind[:batch_size]])
+                ind = ind[:batch_size]
+                tensor_X_0 = tf.convert_to_tensor(X[0][ind])
+                tensor_X_1 = tf.convert_to_tensor(X[1][ind])
+                tensor_X_2 = tf.convert_to_tensor(X[2][ind])
+                tensor_y = tf.convert_to_tensor(y[ind])
                 with tf.GradientTape() as tape:
                     # Train the model on the states and updated Q-values
-                    out = model([tensor_X_0, tensor_X_1])
+                    out = model([tensor_X_0, tensor_X_1, tensor_X_2])
                     out = tf.reshape(out, [-1,8,8])
                     # Calculate loss between new Q-value and old Q-value
                     loss = loss_function(out, tensor_y)
