@@ -6,9 +6,8 @@ from tensorflow import keras
 from tensorflow.keras import layers
 import gym
 from tensorflow.python.ops.gen_math_ops import mul
-from env import max_states
 import tensorflow.keras.regularizers as regularizers
-
+from env import max_states
 
 def convert_s_to_tensor(state):
     out = [[state[i][j] for i in range(len(state))] for j in range(len(state[0]))]
