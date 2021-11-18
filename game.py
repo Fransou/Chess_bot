@@ -15,7 +15,15 @@ class ChessBoard:
             "k": 5,
             'enp':6
         }
-
+        self.revers_transcription = {
+            0:"p",
+            1:"n",
+            2:"b",
+            3:"r",
+            4:"q",
+            5:"k",
+            6:'enp'
+        }
     
     def reset(self):
         self.board = np.zeros((8,8,7))
@@ -53,6 +61,58 @@ class ChessBoard:
             dic = np.array(['a','b','c','d','e','f','g','h'])
             self.board[np.where(dic == fen_splitted[3][0])[0],int(fen_splitted[3][1]),6] = 1
 
+    def generate_fen(self):
+
+        i=0
+        j=7
+        fen0 = ''
+        
+
+        for j in range(7,-1,-1):
+            current_i = 0
+            for i in range(8):
+                if (self.board[i,j] == 0).all():
+                    current_i +=1
+                else:
+                    b_w = self.board[i,j][np.argmax(np.abs(self.board[i,j]))]
+                    piece = self.revers_transcription[np.argmax(np.abs(self.board[i,j]))]
+
+                    if b_w == -1:
+                        piece = piece.upper()
+
+                    if current_i == 0:
+                        fen0 = fen0 + piece
+                    else:
+                        fen0 = fen0 + str(current_i) + piece
+
+                    current_i = 0
+            if current_i>0:
+                fen0 = fen0 + str(current_i)
+            fen0 = fen0 + '/'
+
+        fen = fen0[:-1] + ' '
+        if self.other_feat[-1] == 1:
+            fen = fen + 'w'
+        else:
+            fen = fen + 'b'
+        
+        fen = fen + ' ' + 'K'*self.other_feat[0]+'Q'*self.other_feat[1]+'k'*self.other_feat[2]+'q'*self.other_feat[3]
+        if fen[-1] == ' ':
+            fen = fen + '-'
+
+        if (self.board[:,:,6] == 0).all():
+            fen = fen + ' -'
+
+        else:
+            ind = np.argmax(np.abs(self.board[:,:,6]))
+            dic = np.array(['a','b','c','d','e','f','g','h'])
+            ind = dic[ind[0]] + str(ind[1])
+            fen = fen + ' ' + ind
+        
+        fen = fen + ' 1 10'
+        return fen
+
+ 
 
 
 

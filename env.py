@@ -148,6 +148,8 @@ class Chess_env(gym.Env):
         X_of = []
         y = []
 
+        list_fens = []
+
         for g in range(n_games):
             _ = self.reset()
             for step in range(n_steps):
@@ -155,17 +157,22 @@ class Chess_env(gym.Env):
                 _,_,done,_ = self.step(action)
 
                 if prob>np.random.rand():
-                    obs = self._next_observation()
-                    y.append(
-                        np.sum(
-                            np.sum(obs[0], axis=0) * (1-np.sign(np.abs(self.board_feat.board))),
-                            axis=2
+                    if not self.board.fen().split(' ')[0] in list_fens:
+                        list_fens.append(self.board.fen().split(' ')[0])
+                        obs = self._next_observation()
+                        y.append(
+                            np.sum(
+                                np.sum(obs[0], axis=0) * (1-np.sign(np.abs(self.board_feat.board))),
+                                axis=2
+                            )
                         )
-                    )
-                    X_b.append(self.board_feat.board)
-                    X_of.append(self.board_feat.other_feat[:4])
+                        X_b.append(self.board_feat.board)
+                        X_of.append(self.board_feat.other_feat[:4])
+                        
                 if done:
                     break
 
         return [np.array(X_b), np.array(X_of)], np.array(y)
+
+
 
