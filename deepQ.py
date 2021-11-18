@@ -51,24 +51,32 @@ class DeepQ():
         inp = layers.Input(shape=(4,))
         multiplicator = layers.Input(shape=(1,))
 
+        x_white = layers.Conv2D(64,3, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(inputs)  
+        x_black = layers.Conv2D(64, 3, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(inputs)  
 
-        x = layers.Flatten()(inputs)
+        x = x_white * (1+multiplicator)/2 + (1-multiplicator)/2*x_black
+        x = layers.Dropout(rate=self.dropout_rate)(x)   #6,6,
+        
+        x = layers.Conv2D(64,3, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
+        x = layers.BatchNormalization()(x)
+        x = layers.Dropout(rate=self.dropout_rate)(x) #4,4,
+
+        x = layers.Conv2D(128,2, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
+        x = layers.BatchNormalization()(x)
+        x = layers.Dropout(rate=self.dropout_rate)(x) #3,3,
+
+        x = layers.Conv2D(128,2, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
+        x = layers.BatchNormalization()(x)
+        x = layers.Dropout(rate=self.dropout_rate)(x) #2,2,
+
+        x = layers.Conv2D(128,2, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
+        x = layers.BatchNormalization()(x)
+        x = layers.Dropout(rate=self.dropout_rate)(x) #1,1
+
+        x = layers.Flatten()(x)
         x = layers.Concatenate()([x,inp])
 
-        x_white = layers.Dense(128, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)  
-        x_black = layers.Dense(128, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)  
-        x = x_white * (1+multiplicator)/2 + (1-multiplicator)/2*x_black
-        x = layers.Dropout(rate=self.dropout_rate)(x)
-        
-        x = layers.Dense(128, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
-        x = layers.BatchNormalization()(x)
-        x = layers.Dropout(rate=self.dropout_rate)(x)
-
-        x = layers.Dense(64, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
-        x = layers.BatchNormalization()(x)
-        x = layers.Dropout(rate=self.dropout_rate)(x)
-
-        x = layers.Dense(64, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
+        x = layers.Dense(64, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)
         x = layers.BatchNormalization()(x)
         x = layers.Dropout(rate=self.dropout_rate)(x)
 
