@@ -102,7 +102,7 @@ class DeepQ():
         out_policy = layers.Conv2D(256,1, activation="relu", padding='same')(x)
         out_policy = layers.Dropout(rate=self.dropout_rate)(out_policy)
         # 7 horizontal moves left and right, 7 vertical moves up and down, 7 diagonal NW, NE, SW, SE, 8 knight moves, 3 promotions
-        out_policy = layers.Conv2D(73,1, activation="relu", padding='same')(x)
+        out_policy = layers.Conv2D(73,1, activation="softmax", padding='same')(x)
 
         out = layers.Conv2D(1,1, activation="relu")(x)
         out = layers.Dropout(rate=self.dropout_rate)(out)
@@ -199,15 +199,7 @@ class DeepQ():
                     mask[x0,y0,8*8+8] = 1 
         return mask
 
-
-    def predict_move_to_play(self):
-        inp = self.env.feat_board.board
-        mask = self.create_mask_output()
-        preds = self.model.predict(inp)[1]
-
-        preds = preds * mask
-
-        i,j,k = np.argmax(preds)
+    def translate_policy_ind_move(self,i,j,k):
         dic = ['a','b','c','d','e','f','g','h']
         move = dic[i] + str(j)
 
@@ -253,6 +245,32 @@ class DeepQ():
             move += dic(i-1) + str(j+1) + 'r'
 
         return move
+
+    def predict_move_prob(self, inp):
+        mask = self.create_mask_output()
+        preds = self.model.predict(inp)[1]
+
+        preds = preds * mask
+        out = []
+
+        norm = np.sum(preds)
+        for i in range(preds.shape[0]):
+            for j in range(preds.shape[1]):
+                for k in range(preds.shape[2]):
+                    if preds[i,j,k]>0:
+                        out.append([self.translate_policy_ind_move(i,j,k), preds[i,j,k] / norm])
+        return out
+
+
+    def predict_move_to_play(self):
+        inp = self.env.feat_board.board
+        mask = self.create_mask_output()
+        preds = self.model.predict(inp)[1]
+
+        preds = preds * mask
+
+        i,j,k = np.argmax(preds)
+        return self.translate_policy_ind_move(i,j,k)
 
     def train(self, max_epoch):
         model = self.model
