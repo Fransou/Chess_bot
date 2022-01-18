@@ -30,7 +30,7 @@ def convert_s_to_tensor(state):
 
 class DeepQ():
 
-    def __init__(self, env, dropout_rate=0.2, L2_reg=0.1, n_residual = 3, n_channels = 128):
+    def __init__(self, env, dropout_rate=0.2, n_residual = 3, n_channels = 128):
         self.env = env
         self.model = None
         self.target_model = None
@@ -48,7 +48,6 @@ class DeepQ():
         self.frame_count = 0
 
         self.dropout_rate = dropout_rate
-        self.L2_reg = L2_reg
 
         self.head = self.create_head(n_residual, n_channels)
         self.head_target = self.create_head(n_residual, n_channels)
@@ -61,13 +60,13 @@ class DeepQ():
 
     def residual_block(self, x, n_channels):
         x_skip = x
-        x = layers.Conv2D(n_channels,3, activation="linear",padding='same',kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
+        x = layers.Conv2D(n_channels,3, activation="linear",padding='same')(x)   
         x = layers.BatchNormalization()(x)
         x = layers.Activation(keras.activations.relu)(x)
         x = layers.Dropout(rate=self.dropout_rate)(x)
 
 
-        x = layers.Conv2D(n_channels,3, activation="linear",padding='same',kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
+        x = layers.Conv2D(n_channels,3, activation="linear",padding='same')(x)   
         x = layers.BatchNormalization()(x)
         x = x + x_skip
         x = layers.Activation(keras.activations.relu)(x)
@@ -78,7 +77,7 @@ class DeepQ():
     def create_head(self,n_residual, n_channel):
         inputs = layers.Input(shape=(8, 8, n_channels,))
 
-        x = layers.Conv2D(n_channel,3, activation="linear",padding='same',kernel_regularizer=regularizers.l2(self.L2_reg))(inputs)   
+        x = layers.Conv2D(n_channel,3, activation="linear",padding='same')(inputs)   
         x = layers.BatchNormalization()(x)
         x = layers.Activation(keras.activations.relu)(x)
         x = layers.Dropout(rate=self.dropout_rate)(x)
@@ -96,10 +95,10 @@ class DeepQ():
 
         x = head(inputs)
 
-        out_policy = layers.Conv2D(256,1, activation="relu", padding='same', kernel_regularizer=regularizers.l2(self.L2_reg))(x)
+        out_policy = layers.Conv2D(256,1, activation="relu", padding='same')(x)
         out_policy = layers.Dropout(rate=self.dropout_rate)(out_policy)
         # 7 horizontal moves left and right, 7 vertical moves up and down, 7 diagonal NW, NE, SW, SE, 8 knight moves, 3 promotions
-        out_policy = layers.Conv2D(73,1, activation="relu", padding='same', kernel_regularizer=regularizers.l2(self.L2_reg))(x)
+        out_policy = layers.Conv2D(73,1, activation="relu", padding='same')(x)
 
         out = layers.Conv2D(1,1, activation="relu")(x)
         out = layers.Dropout(rate=self.dropout_rate)(out)
@@ -409,7 +408,7 @@ class DeepQ():
 
         x = self.head([inputs,inp,mult])
 
-        x = layers.Dense(64, activation="linear",kernel_regularizer=regularizers.l2(self.L2_reg))(x)
+        x = layers.Dense(64, activation="linear")(x)
         x = layers.Dropout(rate=self.dropout_rate)(x)
 
         return keras.Model(inputs=[inputs,inp,mult], outputs=x)  
