@@ -11,6 +11,10 @@ import tensorflow.keras.regularizers as regularizers
 from env import max_states
 from game import n_channels
 
+#https://arxiv.org/abs/2111.09259
+
+
+
 # Configuration paramaters for the whole setup
 gamma = 0.99  # Discount factor for past rewards
 epsilon = 1.0  # Epsilon greedy parameter
@@ -52,7 +56,7 @@ class DeepQ():
         self.head = self.create_head(n_residual, n_channels)
         self.head_target = self.create_head(n_residual, n_channels)
 
-        self.model_target = self.create_q_model(self.head_target)
+        self.model_target = self.create_q_model(self.head_target)  #This is the model against which our model will play
         self.model = self.create_q_model(self.head)
 
         self.pre_train_head = self.create_pretraining_head()
@@ -112,6 +116,7 @@ class DeepQ():
 
 
     def create_mask_output(self):
+        """Create masks to evaluate only the moves that are legal, applied to the policy output of the layer"""
         moves = list(self.env.board.legal_moves)
         mask = np.zeros((8,8,73))
         for m in moves:
@@ -266,7 +271,10 @@ class DeepQ():
         # How often to update the target network
         update_target_network = 1000
 
-        loss_function = keras.losses.Huber() # TTTTTTOOOOOOOODDDDDOOOOO : MCTS pour la partie choisir le coup, puis..jy
+        loss_function = keras.losses.Huber() 
+        
+        # TTTTTTOOOOOOOODDDDDOOOOO : MCTS pour la partie choisir le coup, puis..jy
+
         while self.episode_count<=max_epoch:  # Run until solved
             state, final_multiplicator = env.reset()
             episode_reward = 0
@@ -398,7 +406,7 @@ class DeepQ():
                 break
 
 
-
+    # NOT USEFUL FOR NOW
 
 
     def create_pretraining_head(self):
