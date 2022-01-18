@@ -1,3 +1,4 @@
+import imp
 from os import stat
 from time import time
 import numpy as np
@@ -8,6 +9,19 @@ import gym
 from tensorflow.python.ops.gen_math_ops import mul
 import tensorflow.keras.regularizers as regularizers
 from env import max_states
+from game import n_channels
+
+# Configuration paramaters for the whole setup
+gamma = 0.99  # Discount factor for past rewards
+epsilon = 1.0  # Epsilon greedy parameter
+epsilon_min = 0.1  # Minimum epsilon greedy parameter
+epsilon_max = 1.0  # Maximum epsilon greedy parameter
+epsilon_interval = (
+    epsilon_max - epsilon_min
+)  # Rate at which to reduce chance of random action being taken
+batch_size = 32  # Size of batch taken from replay buffer
+max_steps_per_episode = 100
+
 
 def convert_s_to_tensor(state):
     out = [[state[i][j] for i in range(len(state))] for j in range(len(state[0]))]
@@ -16,7 +30,7 @@ def convert_s_to_tensor(state):
 
 class DeepQ():
 
-    def __init__(self, env, dropout_rate=0.2, L2_reg=0.1):
+    def __init__(self, env, dropout_rate=0.2, L2_reg=0.1, n_residual = 3, n_channels = 128):
         self.env = env
         self.model = None
         self.target_model = None
@@ -36,8 +50,8 @@ class DeepQ():
         self.dropout_rate = dropout_rate
         self.L2_reg = L2_reg
 
-        self.head = self.create_head()
-        self.head_target = self.create_head()
+        self.head = self.create_head(n_residual, n_channels)
+        self.head_target = self.create_head(n_residual, n_channels)
 
         self.model_target = self.create_q_model(self.head_target)
         self.model = self.create_q_model(self.head)
@@ -45,130 +59,218 @@ class DeepQ():
         self.pre_train_head = self.create_pretraining_head()
 
 
+    def residual_block(self, x, n_channels):
+        x_skip = x
+        x = layers.Conv2D(n_channels,3, activation="linear",padding='same',kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
+        x = layers.BatchNormalization()(x)
+        x = layers.Activation(keras.activations.relu)(x)
+        x = layers.Dropout(rate=self.dropout_rate)(x)
 
-    def create_head(self):
-        inputs = layers.Input(shape=(8, 8, 7,))
-        inp = layers.Input(shape=(4,))
-        multiplicator = layers.Input(shape=(1,))
 
-        x_white = layers.Conv2D(64,3, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(inputs)  
-        x_black = layers.Conv2D(64, 3, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(inputs)  
+        x = layers.Conv2D(n_channels,3, activation="linear",padding='same',kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
+        x = layers.BatchNormalization()(x)
+        x = x + x_skip
+        x = layers.Activation(keras.activations.relu)(x)
+        x = layers.Dropout(rate=self.dropout_rate)(x)
 
-        x = x_white * (1+multiplicator)/2 + (1-multiplicator)/2*x_black
-        x = layers.Dropout(rate=self.dropout_rate)(x)   #6,6,
+        return x
+
+    def create_head(self,n_residual, n_channel):
+        inputs = layers.Input(shape=(8, 8, n_channels,))
+
+        x = layers.Conv2D(n_channel,3, activation="linear",padding='same',kernel_regularizer=regularizers.l2(self.L2_reg))(inputs)   
+        x = layers.BatchNormalization()(x)
+        x = layers.Activation(keras.activations.relu)(x)
+        x = layers.Dropout(rate=self.dropout_rate)(x)
+
+        for _ in range(n_residual):
+            x = self.residual_block(x, n_channel)
         
-        x = layers.Conv2D(64,3, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
-        x = layers.BatchNormalization()(x)
-        x = layers.Dropout(rate=self.dropout_rate)(x) #4,4,
-
-        x = layers.Conv2D(128,2, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
-        x = layers.BatchNormalization()(x)
-        x = layers.Dropout(rate=self.dropout_rate)(x) #3,3,
-
-        x = layers.Conv2D(128,2, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
-        x = layers.BatchNormalization()(x)
-        x = layers.Dropout(rate=self.dropout_rate)(x) #2,2,
-
-        x = layers.Conv2D(128,2, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
-        x = layers.BatchNormalization()(x)
-        x = layers.Dropout(rate=self.dropout_rate)(x) #1,1
-
-        x = layers.Flatten()(x)
-        x = layers.Concatenate()([x,inp])
-
-        x = layers.Dense(64, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.Dropout(rate=self.dropout_rate)(x)
-
-        x = layers.Dense(64, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)   
-        x = layers.BatchNormalization()(x)
-        x = layers.Dropout(rate=self.dropout_rate)(x)
-
-        return keras.Model(inputs=[inputs, inp, multiplicator], outputs=x)
+        return keras.Model(inputs=inputs, outputs=x)
 
 
 
     def create_q_model(self,head):
 
-        inputs1 = layers.Input(shape=(8, 8, 7,))
-        inputs2 = layers.Input(shape=(4,))
-        multiplicator = layers.Input(shape=(1,))
+        inputs = layers.Input(shape=(8, 8, n_channels,))
 
-        x = head([inputs1,inputs2,multiplicator])
+        x = head(inputs)
 
-        out = layers.Dense(32, activation="relu",kernel_regularizer=regularizers.l2(self.L2_reg))(x)
+        out_policy = layers.Conv2D(256,1, activation="relu", padding='same', kernel_regularizer=regularizers.l2(self.L2_reg))(x)
+        out_policy = layers.Dropout(rate=self.dropout_rate)(out_policy)
+        # 7 horizontal moves left and right, 7 vertical moves up and down, 7 diagonal NW, NE, SW, SE, 8 knight moves, 3 promotions
+        out_policy = layers.Conv2D(73,1, activation="relu", padding='same', kernel_regularizer=regularizers.l2(self.L2_reg))(x)
+
+        out = layers.Conv2D(1,1, activation="relu")(x)
         out = layers.Dropout(rate=self.dropout_rate)(out)
+        
+        out = layers.Flatten()(out)
+        out = layers.Dense(1, activation="tanh")(out)
 
-        out = layers.Dense(5, activation="relu")(out)
-        out = layers.Dropout(rate=self.dropout_rate)(out)
+        out = out
 
-        out = layers.Dense(1, activation="linear")(out)
-        out = layers.Dropout(rate=self.dropout_rate)(out)
+        return keras.Model(inputs=inputs, outputs=[out_policy,out])
 
-        out = out * multiplicator
 
-        return keras.Model(inputs=[inputs1,inputs2,multiplicator], outputs=out)
+    def create_mask_output(self):
+        moves = list(self.env.board.legal_moves)
+        mask = np.zeros((8,8,73))
+        for m in moves:
+            dic = {['a','b','c','d','e','f','g','h'][i] : i for i in range(8)}
+            x0 = dic[m[0]]
+            x1 = dic[m[2]]
+            y0 = int(m[1])
+            y1 = int(m[3])
+            #horizontal
+            if y0 == y1 and not (len(m) == 5 and m[-1] != 'q'):
+                if x0>x1:
+                    mask[x0,y0,x0-x1 + 7*0 -1] = 1
+                else:
+                    mask[x0,y0,x0-x1 + 7*1 -1] = 1
+            #Vertical
+            elif x0 == x1:
+                if y0> y1:
+                    mask[x0,y0,x0-x1 + 7*2 -1] = 1
+                else:
+                    mask[x0,y0,x0-x1 + 7*3 -1] = 1  
+            #diag
+            elif abs(x0-x1) == abs(y0-y1):
+                #NW
+                if x1-x0<0 and y1-y0>0:
+                    mask[x0,y0,x0-x1 + 7*4 -1] = 1
+                #NE
+                elif x1-x0>0 and y1-y0>0:
+                    mask[x0,y0,x0-x1 + 7*5 -1] = 1
+                #SW 
+                elif x1-x0<0 and y1-y0<0:
+                    mask[x0,y0,x0-x1 + 7*6 -1] = 1 
+                #SE
+                elif x1-x0>0 and y1-y0<0:
+                    mask[x0,y0,x0-x1 + 7*7 -1] = 1
+            #Knights
+            else:
+                if x1-x0==1 and y1-y0==2:  
+                    mask[x0,y0,7*8] = 1
+
+                elif x1-x0==2 and y1-y0==1:  
+                    mask[x0,y0,7*8+1] = 1 
+
+                elif x1-x0==2 and y1-y0==-1:  
+                    mask[x0,y0,7*8+2] = 1
+
+                elif x1-x0==1 and y1-y0==-2:  
+                    mask[x0,y0,7*8+3] = 1
+
+                elif x1-x0==-1 and y1-y0==-2:  
+                    mask[x0,y0,7*8+4] = 1  
+
+                elif x1-x0==-2 and y1-y0==-1:  
+                    mask[x0,y0,7*8+5] = 1 
+
+                elif x1-x0==-2 and y1-y0==-1:  
+                    mask[x0,y0,7*8+6] = 1 
+
+                elif x1-x0==-1 and y1-y0==-2:  
+                    mask[x0,y0,7*8+7] = 1  
+            if m[-1] == 'n':
+                if y0 == y1:
+                    mask[x0,y0,8*8] = 1 
+                elif y1-y0 == 1:
+                     mask[x0,y0,8*8+1] = 1 
+                elif y1-y0 == -1:
+                    mask[x0,y0,8*8+2] = 1     
+            if m[-1] == 'b':
+                if y0 == y1:
+                    mask[x0,y0,8*8+3] = 1 
+                elif y1-y0 == 1:
+                     mask[x0,y0,8*8+4] = 1 
+                elif y1-y0 == -1:
+                    mask[x0,y0,8*8+5] = 1 
+            if m[-1] == 'r':
+                if y0 == y1:
+                    mask[x0,y0,8*8+6] = 1 
+                elif y1-y0 == 1:
+                     mask[x0,y0,8*8+7] = 1 
+                elif y1-y0 == -1:
+                    mask[x0,y0,8*8+8] = 1 
+        return mask
 
 
     def predict_move_to_play(self):
-        l_actions = self.env.board.get_possible_actions
-        inp = [[],[],[]]
-        for ac in l_actions:
-            (o0,o1,o2) = self.env.generate_input_from_action(ac)
-            inp[0].append(o0)
-            inp[1].append(o1)
-            inp[2].append(o2)
-        inp[0] = np.array(inp[0])
-        inp[1] = np.array(inp[1])
-        inp[2] = np.array(inp[2])
+        inp = self.env.feat_board.board
+        mask = self.create_mask_output()
+        preds = self.model.predict(inp)[1]
 
-        return self.model.predict(inp)
+        preds = preds * mask
+
+        i,j,k = np.argmax(preds)
+        dic = ['a','b','c','d','e','f','g','h']
+        move = dic[i] + str(j)
+
+        if k < 8*7:
+            length_depl = k%7 +1
+            if k//7 == 0:
+                move += dic[i-length_depl] + str(j)
+            if k//7 == 1:
+                move += dic[i+length_depl] + str(j)
+            if k//7 == 2:
+                move += dic[i] + str(j-length_depl)  
+            if k//7 == 3:
+                move += dic[i] + str(j+length_depl)  
+            if k//7 == 4:
+                move += dic[i- length_depl] + str(j+length_depl) 
+            if k//7 == 5:
+                move += dic[i+ length_depl] + str(j+length_depl)            
+            if k//7 == 6:
+                move += dic[i- length_depl] + str(j-length_depl) 
+            if k//7 == 7:
+                move += dic[i+ length_depl] + str(j-length_depl) 
+        elif k >= 8*7 and k <8*8:
+            knights_move = [(1,2),(2,1),(2,-1),(1,-2),(-1,-2),(-2,-1),(-2,1),(-1,2)]
+            move += dic[i+ knights_move[k-8*7][0]] + str(j + i+ knights_move[k-8*7][1])
+
+        if k ==8*8:
+            move += dic(i) + str(j+1) + 'n'
+        if k ==8*8+1:
+            move += dic(i+1) + str(j+1) + 'n'
+        if k ==8*8+2:
+            move += dic(i-1) + str(j+1) + 'n'
+        if k ==8*8+3:
+            move += dic(i) + str(j+1) + 'b'
+        if k ==8*8+4:
+            move += dic(i+1) + str(j+1) + 'b'
+        if k ==8*8+5:
+            move += dic(i-1) + str(j+1) + 'b'
+        if k ==8*8+6:
+            move += dic(i) + str(j+1) + 'r'
+        if k ==8*8+7:
+            move += dic(i+1) + str(j+1) + 'r'
+        if k ==8*8+8:
+            move += dic(i-1) + str(j+1) + 'r'
+
+        return move
 
     def train(self, max_epoch):
-        # Configuration paramaters for the whole setup
-        gamma = 0.99  # Discount factor for past rewards
-        epsilon = 1.0  # Epsilon greedy parameter
-        epsilon_min = 0.1  # Minimum epsilon greedy parameter
-        epsilon_max = 1.0  # Maximum epsilon greedy parameter
-        epsilon_interval = (
-            epsilon_max - epsilon_min
-        )  # Rate at which to reduce chance of random action being taken
-        batch_size = 32  # Size of batch taken from replay buffer
-        max_steps_per_episode = 100
-
-        # The first model makes the predictions for Q-values which are used to
-        # make a action.
         model = self.model
-        # Build a target model for the prediction of future rewards.
-        # The weights of a target model get updated every 10000 steps thus when the
-        # loss between the Q-values is calculated the target Q-value is stable.
         model_target = self.model_target
         env = self.env
-
-        # In the Deepmind paper they use RMSProp however then Adam optimizer
-        # improves training time
         optimizer = keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
-
 
         # Number of frames to take random action and observe output
         epsilon_random_frames = 20000
         # Number of frames for exploration
         epsilon_greedy_frames = 1000000.0
         # Maximum replay length
-        # Note: The Deepmind paper suggests 1000000 however this causes memory issues
         max_memory_length = 5000
         # Train the model after 4 actions
         update_after_actions = 4
         # How often to update the target network
         update_target_network = 1000
 
-        # Using huber loss for stability
-        loss_function = keras.losses.Huber()
-
+        loss_function = keras.losses.Huber() # TTTTTTOOOOOOOODDDDDOOOOO : MCTS pour la partie choisir le coup, puis..jy
         while self.episode_count<=max_epoch:  # Run until solved
             state, final_multiplicator = env.reset()
             episode_reward = 0
-
             for timestep in range(1, max_steps_per_episode):
                 # env.render(); Adding this line would show the attempts
                 # of the agent in a pop up window.
@@ -183,11 +285,7 @@ class DeepQ():
                 else:
                     # Predict action Q-values
                     # From environment state
-                    t_s = convert_s_to_tensor(state)
-                    action_probs = model.predict(t_s, training=False)
-                    # Take best action
-                    action = tf.argmax((final_multiplicator * action_probs[0])[:len(actions)]).numpy()
-                    move = actions[action]
+                    move = self.predict_move_to_play()
 
 
                 # Decay probability of taking random action
@@ -301,8 +399,11 @@ class DeepQ():
                 break
 
 
+
+
+
     def create_pretraining_head(self):
-        inputs = layers.Input(shape=(8,8,7))
+        inputs = layers.Input(shape=(8,8,n_channels))
         inp = layers.Input(shape = (4,))
         mult = layers.Input(shape = (1,))
 
