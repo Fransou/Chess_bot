@@ -21,7 +21,7 @@ class Chess_env(gym.Env):
 
         self.observation_space = spaces.Tuple(
             (spaces.Box(low=0, high=255, shape=
-                        (8, 8, 7), dtype=np.uint8),
+                        (8, 8, n_channels), dtype=np.uint8),
             spaces.Box(low=0, high=1, shape =(4,1), dtype=np.uint8)
             )
         )
@@ -83,7 +83,7 @@ class Chess_env(gym.Env):
             mult.append(obs[2])
 
         for i in range(max_states - len(possible_actions)):
-            obs0.append(np.zeros((8,8,7)))
+            obs0.append(np.zeros((8,8,n_channels)))
             obs1.append(np.zeros((4,)))
             mult.append([0])
 
@@ -118,7 +118,7 @@ class Chess_env(gym.Env):
         if not done:
             obs = self._next_observation()
         else:
-            obs = np.zeros((max_states,8,8,7)),np.zeros((max_states,4,)),np.zeros((max_states,))
+            obs = np.zeros((max_states,8,8,n_channels)),np.zeros((max_states,4,)),np.zeros((max_states,))
         self.reset_board_feat()
         return obs, reward/10, done, {}
 
