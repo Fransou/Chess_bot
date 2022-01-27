@@ -4,7 +4,6 @@ from gym import spaces
 import numpy as np
 import chess
 from game import *
-max_states = 80
 
 class Chess_env(gym.Env):
     """Custom Environment that follows gym interface"""
@@ -14,18 +13,7 @@ class Chess_env(gym.Env):
         super(Chess_env, self).__init__()    # Define action and observation space
 
         # They must be gym.spaces objects    # Example when using discrete actions:
-
-        self.action_space = spaces.Discrete(max_states)    
-
         # Example for using image as input:
-
-        self.observation_space = spaces.Tuple(
-            (spaces.Box(low=0, high=255, shape=
-                        (8, 8, n_channels), dtype=np.uint8),
-            spaces.Box(low=0, high=1, shape =(4,1), dtype=np.uint8)
-            )
-        )
-        self.reward_range = (-1, 1) 
 
         self.board_feat = ChessBoard()
         self.board = chess.Board()
@@ -51,7 +39,7 @@ class Chess_env(gym.Env):
 
         # We play moves randomly
 
-        n_init_moves = np.random.randint(0,6)
+        n_init_moves = np.random.randint(0,3) *2 +1 
         for i in range(n_init_moves):
             action = np.random.choice(self.get_possible_actions())
             self._take_action(action)
@@ -63,37 +51,8 @@ class Chess_env(gym.Env):
 
 
     def _next_observation(self):
-        """
-        tuple : (obs0,obs1,multiplicator)
-
-        obs0 : Board
-        obs1 : Special features (can castle)
-        multiplicator : scalar, whether it black's or white's turn
-        """
-
-        possible_actions = list(self.board.legal_moves)
-        obs0 = []
-        obs1 = []
-        mult = []
-
-        for action in possible_actions:
-            obs = self.generate_input_from_action(action)
-            obs0.append(obs[0])
-            obs1.append(obs[1])
-            mult.append(obs[2])
-
-        for i in range(max_states - len(possible_actions)):
-            obs0.append(np.zeros((8,8,n_channels)))
-            obs1.append(np.zeros((4,)))
-            mult.append([0])
-
-        obs0 = np.array(obs0)
-        obs1 = np.array(obs1)
-        mult = np.array(mult)
-
-        self.reset_board_feat()
-
-        return [obs0,obs1,mult]
+        self.board_feat.translate(self.board.fen())
+        return self.board_feat.board
 
     def step(self, action):
         """One play (2 step to come back to the same player)"""
@@ -118,7 +77,7 @@ class Chess_env(gym.Env):
         if not done:
             obs = self._next_observation()
         else:
-            obs = np.zeros((max_states,8,8,n_channels)),np.zeros((max_states,4,)),np.zeros((max_states,))
+            obs = np.zeros((8,8,n_channels))
         self.reset_board_feat()
         return obs, reward/10, done, {}
 
@@ -138,41 +97,5 @@ class Chess_env(gym.Env):
 
         self.board_feat.translate(inter_board.fen())
 
-        return self.board_feat.board, np.array(self.board_feat.other_feat[:-1]),  np.array([self.board_feat.other_feat[-1]])
-
-
-    
-
-    def create_pretraining_dataset(self,n_games, n_steps, prob):
-        X_b = []
-        X_of = []
-        y = []
-
-        list_fens = []
-
-        for g in range(n_games):
-            _ = self.reset()
-            for step in range(n_steps):
-                action = np.random.choice(list(self.board.legal_moves))
-                _,_,done,_ = self.step(action)
-
-                if prob>np.random.rand():
-                    if not self.board.fen().split(' ')[0] in list_fens:
-                        list_fens.append(self.board.fen().split(' ')[0])
-                        obs = self._next_observation()
-                        y.append(
-                            np.sum(
-                                np.sum(obs[0], axis=0) * (1-np.sign(np.abs(self.board_feat.board))),
-                                axis=2
-                            )
-                        )
-                        X_b.append(self.board_feat.board)
-                        X_of.append(self.board_feat.other_feat[:4])
-                        
-                if done:
-                    break
-
-        return [np.array(X_b), np.array(X_of)], np.array(y)
-
-
+        return self.board_feat.board
 

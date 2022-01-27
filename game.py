@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-n_channels = 20
+n_channels = 16
 
 
 class ChessBoard:
@@ -32,7 +32,7 @@ class ChessBoard:
         }
     
     def reset(self):
-        self.board = np.zeros((8,8,20))
+        self.board = np.zeros((8,8,16))
 
 
     def translate(self,fen):
@@ -51,13 +51,13 @@ class ChessBoard:
                 i+= int(l)
 
         if not 'K' in fen_splitted[2]:
-            self.board[:,:,13] = 1
+            self.board[:,:,12] = 1
         if not 'Q' in fen_splitted[2]:
-            self.board[:,:,14] = 1
+            self.board[:,:,13] = 1
         if not 'k' in fen_splitted[2]:
-            self.board[:,:,15] = 1
+            self.board[:,:,14] = 1
         if not 'q' in fen_splitted[2]:
-            self.board[:,:,16] = 1
+            self.board[:,:,15] = 1
         
         if not fen_splitted[1]=='w':
             for k in range(12):

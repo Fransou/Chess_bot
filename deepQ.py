@@ -8,29 +8,39 @@ from tensorflow.keras import layers
 import gym
 from tensorflow.python.ops.gen_math_ops import mul
 import tensorflow.keras.regularizers as regularizers
-from env import max_states
+from env import *
 from game import n_channels
 
-#https://arxiv.org/abs/2111.09259
+# https://arxiv.org/abs/2111.09259
+
+
+def revert_board(board):
+    """Changes the side of the board to exchange white's and black's piece."""
+    b = board.copy()
+
+    b[:,:4,:6] = board[:,8:3:-1,6:12]
+    b[:,4:,:6] = board[:,3::-1,6:12]
+
+    b[:,:4,6:12] = board[:,8:3:-1,:6]
+    b[:,4:,6:12] = board[:,3::-1,:6]
+
+    b[:,:,12:14] = board[:,:,14:16]
+    b[:,:,14:16] = board[:,:,12:14]
+
+    return b
+
+def revert_prediction(move):
+    n_move = ''
+    for i in range(0,len(move)):
+        if i%2==1:
+            n_move += str(8-int(move[i]))
+        else:
+            n_move += move[i]
+    return n_move
 
 
 
-# Configuration paramaters for the whole setup
-gamma = 0.99  # Discount factor for past rewards
-epsilon = 1.0  # Epsilon greedy parameter
-epsilon_min = 0.1  # Minimum epsilon greedy parameter
-epsilon_max = 1.0  # Maximum epsilon greedy parameter
-epsilon_interval = (
-    epsilon_max - epsilon_min
-)  # Rate at which to reduce chance of random action being taken
-batch_size = 32  # Size of batch taken from replay buffer
-max_steps_per_episode = 100
 
-
-def convert_s_to_tensor(state):
-    out = [[state[i][j] for i in range(len(state))] for j in range(len(state[0]))]
-    out = [np.concatenate(o, axis=0) for o in out]
-    return [tf.convert_to_tensor(o) for o in out]
 
 class DeepQ():
 
@@ -47,6 +57,7 @@ class DeepQ():
         self.episode_reward_history = []
         self.n_action_history = []
         self.n_action_next_history = []
+        self.mask_history = []
         self.running_reward = 0
         self.episode_count = 0
         self.frame_count = 0
@@ -58,9 +69,6 @@ class DeepQ():
 
         self.model_target = self.create_q_model(self.head_target)  #This is the model against which our model will play
         self.model = self.create_q_model(self.head)
-
-        self.pre_train_head = self.create_pretraining_head()
-
 
     def residual_block(self, x, n_channels):
         x_skip = x
@@ -91,8 +99,6 @@ class DeepQ():
         
         return keras.Model(inputs=inputs, outputs=x)
 
-
-
     def create_q_model(self,head):
 
         inputs = layers.Input(shape=(8, 8, n_channels,))
@@ -102,7 +108,7 @@ class DeepQ():
         out_policy = layers.Conv2D(256,1, activation="relu", padding='same')(x)
         out_policy = layers.Dropout(rate=self.dropout_rate)(out_policy)
         # 7 horizontal moves left and right, 7 vertical moves up and down, 7 diagonal NW, NE, SW, SE, 8 knight moves, 3 promotions
-        out_policy = layers.Conv2D(73,1, activation="relu", padding='same')(x)
+        out_policy = layers.Conv2D(73,1, activation="softmax", padding='same')(x)
 
         out = layers.Conv2D(1,1, activation="relu")(x)
         out = layers.Dropout(rate=self.dropout_rate)(out)
@@ -112,25 +118,27 @@ class DeepQ():
 
         out = out
 
-        return keras.Model(inputs=inputs, outputs=[out_policy,out])
+        return keras.Model(inputs=inputs, outputs=[out,out_policy])
 
-
-    def create_mask_output(self):
+    def create_mask_output(self, env= None):
         """Create masks to evaluate only the moves that are legal, applied to the policy output of the layer"""
+        if env == None:
+            env = self.env
         moves = list(self.env.board.legal_moves)
         mask = np.zeros((8,8,73))
         for m in moves:
+            m=str(m)
             dic = {['a','b','c','d','e','f','g','h'][i] : i for i in range(8)}
             x0 = dic[m[0]]
             x1 = dic[m[2]]
-            y0 = int(m[1])
-            y1 = int(m[3])
+            y0 = int(m[1])-1
+            y1 = int(m[3])-1
             #horizontal
             if y0 == y1 and not (len(m) == 5 and m[-1] != 'q'):
                 if x0>x1:
-                    mask[x0,y0,x0-x1 + 7*0 -1] = 1
+                    mask[x0-1,y0,x0-x1 + 7*0 -1] = 1
                 else:
-                    mask[x0,y0,x0-x1 + 7*1 -1] = 1
+                    mask[x0-1,y0,x0-x1 + 7*1 -1] = 1
             #Vertical
             elif x0 == x1:
                 if y0> y1:
@@ -180,34 +188,26 @@ class DeepQ():
                 if y0 == y1:
                     mask[x0,y0,8*8] = 1 
                 elif y1-y0 == 1:
-                     mask[x0,y0,8*8+1] = 1 
+                    mask[x0,y0,8*8+1] = 1 
                 elif y1-y0 == -1:
                     mask[x0,y0,8*8+2] = 1     
             if m[-1] == 'b':
                 if y0 == y1:
                     mask[x0,y0,8*8+3] = 1 
                 elif y1-y0 == 1:
-                     mask[x0,y0,8*8+4] = 1 
+                    mask[x0,y0,8*8+4] = 1 
                 elif y1-y0 == -1:
                     mask[x0,y0,8*8+5] = 1 
             if m[-1] == 'r':
                 if y0 == y1:
                     mask[x0,y0,8*8+6] = 1 
                 elif y1-y0 == 1:
-                     mask[x0,y0,8*8+7] = 1 
+                    mask[x0,y0,8*8+7] = 1 
                 elif y1-y0 == -1:
                     mask[x0,y0,8*8+8] = 1 
         return mask
 
-
-    def predict_move_to_play(self):
-        inp = self.env.feat_board.board
-        mask = self.create_mask_output()
-        preds = self.model.predict(inp)[1]
-
-        preds = preds * mask
-
-        i,j,k = np.argmax(preds)
+    def translate_policy_ind_move(self,i,j,k):
         dic = ['a','b','c','d','e','f','g','h']
         move = dic[i] + str(j)
 
@@ -254,33 +254,84 @@ class DeepQ():
 
         return move
 
-    def train(self, max_epoch):
+    def predict_move_prob(self, inp):
+        mask = self.create_mask_output()
+        preds = self.model.predict(inp)[1]
+
+        preds = preds * mask
+        out = []
+
+        norm = np.sum(preds)
+        for i in range(preds.shape[0]):
+            for j in range(preds.shape[1]):
+                for k in range(preds.shape[2]):
+                    if preds[i,j,k]>0:
+                        out.append([self.translate_policy_ind_move(i,j,k), preds[i,j,k] / norm])
+        return out
+
+    def predict_move_to_play(self, target = False, env = None, white = True):
+        if env == None:
+            env = self.env
+
+        inp = env.feat_board.board
+        mask = self.create_mask_output(env)
+        if not white:
+            mask = np.flip(mask, axis=1)
+
+        if target:
+            preds = self.target_model.predict(inp)[1]
+        else:
+            preds = self.model.predict(inp)[1]
+        preds = preds * mask
+        i,j,k = np.argmax(preds)
+        return self.translate_policy_ind_move(i,j,k)
+
+    def train(
+            self, 
+            max_epoch, 
+            epsilon_random_frames = 20000,
+            epsilon_greedy_frames = 1000000.0,
+            max_memory_length = 5000,
+            update_after_actions = 4,
+            update_target_network = 1000,
+            epsilon = 1.,
+            epsilon_min = 0.1,
+            gamma = 0.99,
+            batch_size = 32,
+            max_steps_per_episode = 100
+        ):
+        """
+        Max epochs : maximum number of errors
+        epsilon_random_frames : Number of frames to take random action and observe output
+        epsilon_greedy_frames :Number of frames for exploration
+        max_memory_length : Maximum replay length
+        update_after_actions : Train the model after ? actions
+        update_target_network : How often to update the target network
+        epsilon : Epsilon greedy parameter
+        epsilon min : Minimum epsilon greedy parameter
+        gamma : Discount factor for past rewards
+        batch_size : Size of batch taken from replay buffer
+        """
         model = self.model
         model_target = self.model_target
         env = self.env
         optimizer = keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
 
-        # Number of frames to take random action and observe output
-        epsilon_random_frames = 20000
-        # Number of frames for exploration
-        epsilon_greedy_frames = 1000000.0
-        # Maximum replay length
-        max_memory_length = 5000
-        # Train the model after 4 actions
-        update_after_actions = 4
-        # How often to update the target network
-        update_target_network = 1000
+        epsilon_interval = (
+            epsilon - epsilon_min
+        )  # Rate at which to reduce chance of random action being taken
 
         loss_function = keras.losses.Huber() 
         
         # TTTTTTOOOOOOOODDDDDOOOOO : MCTS pour la partie choisir le coup, puis..jy
 
         while self.episode_count<=max_epoch:  # Run until solved
-            state, final_multiplicator = env.reset()
+            state,_ = env.reset()
             episode_reward = 0
             for timestep in range(1, max_steps_per_episode):
-                # env.render(); Adding this line would show the attempts
-                # of the agent in a pop up window.
+                
+                self.mask_history.append(self.create_mask_output())
+
                 self.frame_count += 1
                 actions = env.get_possible_actions()
 
@@ -302,7 +353,7 @@ class DeepQ():
                 # Apply the sampled action in our environment
                 state_next, reward, done, _ = env.step(move)
 
-                episode_reward = reward*final_multiplicator
+                episode_reward = reward
 
                 if not done:
                     actions = env.get_possible_actions()
@@ -310,14 +361,12 @@ class DeepQ():
                     # Take random action
                         move = np.random.choice(actions)
                     else:
-                        t_sn = convert_s_to_tensor(state_next)
-                        action_probs_opponent = model_target(t_sn, training=False)
-                        action_opponent = tf.argmax(-(final_multiplicator * action_probs_opponent[0])[:len(actions)]).numpy()
-                        move = actions[action_opponent]
-                    state_next, r, done, _ = env.step(move)
-                    
-
-
+                        t_sn = tf.convert_to_tensor(np.array(state_next))
+                        t_sn = revert_board(t_sn)
+                        move = revert_prediction(self.predict_move_to_play(True, white=False))
+                    state_next, reward, done, _ = env.step(move)    
+                    if done:
+                        reward = -1             
                 # Save actions and states in replay buffer
                 self.action_history.append(action)
                 self.state_history.append(state)
@@ -327,7 +376,6 @@ class DeepQ():
                 self.n_action_next_history.append(len(env.get_possible_actions()))
 
                 state = state_next
-
                 # Update every fourth frame and once batch size is over 32
                 if self.frame_count % update_after_actions == 0 and len(self.done_history) > batch_size:
 
@@ -337,20 +385,21 @@ class DeepQ():
                     # Using list comprehension to sample from replay buffer
                     state_sample = [self.state_history[i] for i in indices]
                     state_next_sample = [self.state_next_history[i] for i in indices]
-                    rewards_sample = [self.rewards_history[i] for i in indices]
+                    rewards_sample = np.array([self.rewards_history[i] for i in indices])
                     action_sample = [self.action_history[i] for i in indices]
                     done_sample = tf.convert_to_tensor(
                         [float(self.done_history[i]) for i in indices]
                     )
+                    mask_sample = [self.mask_history[i] for i in indices]
                     # Build the updated Q-values for the sampled future states
                     # Use the target model for stability
 
                     future_rewards = []
                     for s in state_next_sample:
-                        res = model_target.predict(s) * final_multiplicator
-                        future_rewards.append(res)
+                        s = s.reshape(-1,8,8,16)
+                        res = model_target.predict([s]) #### MTCS
+                        future_rewards.append(res[0])
                     future_rewards = np.array(future_rewards).astype('float32')
-
                     future_rewards = tf.convert_to_tensor(future_rewards)
                     # Q value = reward + discount factor * expected future reward
                     updated_q_values = rewards_sample + gamma * tf.reduce_max(
@@ -360,12 +409,17 @@ class DeepQ():
                     # If final frame set the last value to -1
                     updated_q_values = updated_q_values * (1 - done_sample) - done_sample
                     # Create a mask so we only calculate loss on the updated Q-values
-                    masks = tf.one_hot(action_sample, max_states)
+                    masks = tf.one_hot(action_sample,1)
                     with tf.GradientTape() as tape:
                         # Train the model on the states and updated Q-values
-                        tensor_ss = convert_s_to_tensor(state_sample)
-                        q_values = model(tensor_ss)
-                        q_values = tf.reshape(q_values, (-1,max_states))
+                        tensor_ss = tf.convert_to_tensor(np.array(state_sample))
+                        pred = model(tensor_ss)
+                        q_v_move = tf.math.reduce_max(pred[1] * tf.convert_to_tensor(mask_sample, dtype='float32'))
+
+                        q_values = pred[0] * q_v_move
+                        
+                            #Voire comment on a la loss en fonction des différents outputs
+                        q_values = tf.reshape(q_values, (-1))
                         # Apply the masks to the Q-values to get the Q-value for action taken
                         q_action = tf.reduce_sum(tf.multiply(q_values, masks), axis=1)
                         # Calculate loss between new Q-value and old Q-value
@@ -392,11 +446,12 @@ class DeepQ():
 
                 if done:
                     break
-
+            print('Update')
             # Update running reward to check condition for solving
             self.episode_reward_history.append(episode_reward)
             if len(self.episode_reward_history) > 100:
                 del self.episode_reward_history[:1]
+
             self.running_reward = np.mean(self.episode_reward_history)
 
             self.episode_count += 1
@@ -404,61 +459,3 @@ class DeepQ():
             if self.running_reward > 40:  # Condition to consider the task solved
                 print("Solved at episode {}!".format(self.episode_count))
                 break
-
-
-    # NOT USEFUL FOR NOW
-
-
-    def create_pretraining_head(self):
-        inputs = layers.Input(shape=(8,8,n_channels))
-        inp = layers.Input(shape = (4,))
-        mult = layers.Input(shape = (1,))
-
-        x = self.head([inputs,inp,mult])
-
-        x = layers.Dense(64, activation="linear")(x)
-        x = layers.Dropout(rate=self.dropout_rate)(x)
-
-        return keras.Model(inputs=[inputs,inp,mult], outputs=x)  
-
-
-    def pretrain(self,X,y,X_test,y_test, lr=1e-4, max_iter=500):
-
-        batch_size = 512 
-        
-        model = self.pre_train_head
-        n_samples = X[0].shape[0]
-
-        optimizer = keras.optimizers.Adam(learning_rate=lr)
-        loss_function = keras.losses.Huber()
-        loss_mem = []
-        loss_test_mem = []
-
-        for ep in range(max_iter):  # Run until solved
-            loss_mem.append(0)
-            for it in range(n_samples//batch_size):
-                ind = np.arange(0,n_samples).astype('int32')
-                np.random.shuffle(ind)
-                ind = ind[:batch_size]
-                tensor_X_0 = tf.convert_to_tensor(X[0][ind])
-                tensor_X_1 = tf.convert_to_tensor(X[1][ind])
-                tensor_X_2 = tf.convert_to_tensor(X[2][ind])
-                tensor_y = tf.convert_to_tensor(y[ind])
-                with tf.GradientTape() as tape:
-                    # Train the model on the states and updated Q-values
-                    out = model([tensor_X_0, tensor_X_1, tensor_X_2])
-                    out = tf.reshape(out, [-1,8,8])
-                    # Calculate loss between new Q-value and old Q-value
-                    loss = loss_function(out, tensor_y)
-                loss_mem[-1] += float(loss/(n_samples//batch_size))
-                grads = tape.gradient(loss, model.trainable_variables)
-                optimizer.apply_gradients(zip(grads, model.trainable_variables))
-
-            loss_test = loss_function(
-                tf.reshape(model(X_test),[-1,8,8]),
-                y_test
-                )
-            
-            loss_test_mem.append(float(loss_test))
-            print(f"Epoch : {ep} completed, train loss : {loss_mem[-1]}, test loss : {loss_test}")
-        return loss_mem, loss_test_mem
