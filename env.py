@@ -9,21 +9,26 @@ class Chess_env(gym.Env):
     """Custom Environment that follows gym interface"""
     metadata = {'render.modes': ['human']}
 
-    def __init__(self):
+    def __init__(self, fen = ""):
         super(Chess_env, self).__init__()    # Define action and observation space
 
         # They must be gym.spaces objects    # Example when using discrete actions:
         # Example for using image as input:
+        if fen =="":
+            self.board_feat = ChessBoard()
+            self.board = chess.Board()
+        else:
+            self.board = chess.Board(fen)
+            self.board_feat = ChessBoard()
+            self.board_feat.translate(fen)
 
-        self.board_feat = ChessBoard()
-        self.board = chess.Board()
         self.current_step = 0
         self.reward = 0
 
     def _take_action(self, action):
         """Updates the env when the agent choses an action"""
         # Execute one time step within the environment
-        self.board.push(action)
+        self.board.push_san(str(action))
 
         self.board_feat.translate(self.board.fen())
 
@@ -39,7 +44,7 @@ class Chess_env(gym.Env):
 
         # We play moves randomly
 
-        n_init_moves = np.random.randint(0,3) *2 +1 
+        n_init_moves = np.random.randint(0,3) *2
         for i in range(n_init_moves):
             action = np.random.choice(self.get_possible_actions())
             self._take_action(action)

@@ -58,11 +58,4 @@ class ChessBoard:
             self.board[:,:,14] = 1
         if not 'q' in fen_splitted[2]:
             self.board[:,:,15] = 1
-        
-        if not fen_splitted[1]=='w':
-            for k in range(12):
-                self.board[:, :, k] = self.board[:, ::-1, k]
-
-            for k in range(6):
-                (self.board[:,:,k],self.board[:,:,6+k]) = (self.board[:,:,6+k],self.board[:,:,k])
 
