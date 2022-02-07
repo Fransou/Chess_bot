@@ -67,24 +67,20 @@ class Chess_env(gym.Env):
         done = False
         reward = 0
 
-        
-        reward = (fen.count('Q')- fen.count('q')) * 9/10 + 5/10 * (fen.count('R')- fen.count('r')) + 3/10 * (fen.count('B') + fen.count('N') - fen.count('n') - fen.count('b'))        
-
         if self.board.is_seventyfive_moves() or self.board.is_fivefold_repetition() or self.board.is_insufficient_material() or self.get_possible_actions() == []:
-            reward =0
             done = True
         
         if self.board.is_checkmate():
-            reward += 10
+            reward = 1
             done = True
-
 
         if not done:
             obs = self._next_observation()
         else:
             obs = np.zeros((8,8,n_channels))
+
         self.reset_board_feat()
-        return obs, reward/10, done, {}
+        return obs, reward, done, {}
 
 
     def get_possible_actions(self):
