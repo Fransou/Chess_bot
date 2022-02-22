@@ -334,8 +334,10 @@ class DeepQ():
         for c in range(preds.shape[0]):
             outs_m.append([])
             outs_p.append([])
+
         indices = np.argwhere(preds>eps)
         sums = [np.sum(outs_p[c]) for c in range(preds.shape[0])]
+        
         for c,i,j,k in indices:
             m = self.translate_policy_ind_move(i,j,k, env = envs[c])
             
@@ -410,12 +412,12 @@ class DeepQ():
                     _, _, done, _ = envs[i].step(m)
                     dones[i] = done
                     q_val[i] = q_value[i]
-
+        print(q_val, paths)
         q_val = np.array(q_val).reshape(-1)
         results = {m : [] for m in paths}
         for m, q_v in zip(paths, q_val):
             results[m].append(q_v)
-
+        print(results)
         max_val = -np.inf
         for m in results.keys():
             val = np.mean(results[m])
@@ -423,8 +425,6 @@ class DeepQ():
                 move = m
                 max_val = val
         return move
-
-    
 
     def train(
             self, 
@@ -518,7 +518,7 @@ class DeepQ():
                 else:
                     print('Won')
 
-                    
+
                 batch['state'][-1].append(state)
                 batch['target_move'][-1].append(self.create_mask_output([action]))
                 batch['reward'][-1] = reward
@@ -656,14 +656,13 @@ class DeepQ():
                 action = np.random.randint(0,len(actions))
                 move = actions[action]
 
-
                 # Apply the sampled action in our environment
                 action = str(move)
                 
                 stockfish.set_fen_position(env.board.fen())
-                reward = np.clip(stockfish.get_evaluation()['value'], -1, 1,)
+                reward = np.clip(stockfish.get_evaluation()['value']/500, -1, 1,)
                 best_moves = [s['Move'] for s in stockfish.get_top_moves(n_top_move)]
-                if np.random.random()>random_best_action:
+                if np.random.random()<random_best_action:
                     action = stockfish.get_best_move()
 
                 state_next, _, done, _ = env.step(action)
@@ -671,13 +670,11 @@ class DeepQ():
                 if not done:
                     actions = env.get_possible_actions()
                     move = np.random.choice(actions)
-                    if np.random.random()>random_best_action:
+                    if np.random.random()<random_best_action:
                         stockfish.set_fen_position(env.board.fen())
                         move = stockfish.get_best_move()
-
                     state_next, _, done, _ = env.step(move)    
                     if done:
-                        reward = -1
                         print('Lost')
                 else:
                     print('Won')
@@ -727,6 +724,7 @@ class DeepQ():
 
                     loss_v = loss_function_move(pred_move, target_move_sample_t)
                     loss_q = loss_function(final_reward, q_value)
+                    print(loss_q.shape)
 
                     loss = loss_q + loss_v
                 # Backpropagation
@@ -758,6 +756,21 @@ class DeepQ():
                 axes[1].plot(self.loss_v_history)
                 axes[1].set_title('Value Loss')
 
+                if len(self.loss_q_history)>20:
+                    axes[0].plot(
+                        np.arange(len(self.loss_q_history))[20:],
+                        np.mean(
+                            np.array([self.loss_q_history[i:-20+i] for i in range(20)]),
+                            axis = 0
+                            )
+                        )
+                    axes[1].plot(
+                        np.arange(len(self.loss_v_history))[20:],
+                        np.mean(
+                            np.array([self.loss_v_history[i:-20+i] for i in range(20)]),
+                            axis = 0
+                            )
+                        )
                 plt.show()
                 
             self.episode_count += 1

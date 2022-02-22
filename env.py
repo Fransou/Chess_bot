@@ -44,11 +44,15 @@ class Chess_env(gym.Env):
 
         # We play moves randomly
 
-        n_init_moves = np.random.randint(0,3) *2
+        n_init_moves = np.random.randint(0,10) *2
         for i in range(n_init_moves):
-            action = np.random.choice(self.get_possible_actions())
-            self._take_action(action)
-
+            if not self.get_possible_actions() == []:
+                action = np.random.choice(self.get_possible_actions())
+                self._take_action(action)
+            else:
+                self.reset()
+        if self.get_possible_actions() == []:
+            self.reset()
         return self._next_observation(), 2*int(n_init_moves%2 ==0)-1
 
     def reset_board_feat(self):
