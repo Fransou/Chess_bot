@@ -4,6 +4,10 @@ from gym import spaces
 import numpy as np
 import chess
 from game import *
+from stockfish import Stockfish
+
+
+stockfish = Stockfish(path="C:/Users/Philippe/Downloads/stockfish_13_win_x64_avx2/stockfish_13_win_x64_avx2")
 
 class Chess_env(gym.Env):
     """Custom Environment that follows gym interface"""
@@ -44,7 +48,7 @@ class Chess_env(gym.Env):
 
         # We play moves randomly
 
-        n_init_moves = np.random.randint(0,10) *2
+        n_init_moves = np.random.randint(0,10) * 2 +1
         for i in range(n_init_moves):
             if not self.get_possible_actions() == []:
                 action = np.random.choice(self.get_possible_actions())
@@ -52,7 +56,20 @@ class Chess_env(gym.Env):
             else:
                 self.reset()
         if self.get_possible_actions() == []:
-            self.reset()
+            return self.reset()
+        n_pieces = np.sum(self.board_feat.board[:,:,:12])
+
+        while n_pieces > 6 or n_init_moves%2 == 1:
+            stockfish.set_fen_position(self.board.fen())
+            move = stockfish.get_best_move()
+            n_pieces = np.sum(self.board_feat.board[:,:,:12])
+
+            _,_,done,_ = self.step(move)
+
+            n_init_moves += 1 
+
+            if done:
+                return self.reset()
         return self._next_observation(), 2*int(n_init_moves%2 ==0)-1
 
     def reset_board_feat(self):
