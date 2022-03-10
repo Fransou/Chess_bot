@@ -6,7 +6,7 @@ n_channels = 16
 class ChessBoard:
 
     def __init__(self,) -> None:
-        self.board = np.zeros((8,8,13+7))
+        self.board = np.zeros((8,8,16))
         self.other_feat = [1,1,1,1,1] #castle,long,castle, who'sturn
         self.transcription = {
             "p": 0,

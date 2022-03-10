@@ -17,8 +17,12 @@ from tqdm import tqdm
 from time import time
 from IPython.display import clear_output
 from stockfish import Stockfish
+from mcts import *
 
 stockfish = Stockfish(path="C:/Users/Philippe/Downloads/stockfish_13_win_x64_avx2/stockfish_13_win_x64_avx2")
+stockfish_v_elo = Stockfish(path="C:/Users/Philippe/Downloads/stockfish_13_win_x64_avx2/stockfish_13_win_x64_avx2")
+
+
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -297,11 +301,12 @@ class DeepQ():
             move += dic[i+1] + str(j+1) + 'r'
         if k ==8*8+8:
             move += dic[i-1] + str(j+1) + 'r'
+
         if move[-1] == '8' and env.board.piece_at(chess.parse_square(move[:2])).piece_type == 1:
             move += 'q'
         return move
 
-    def predict_move_prob(self, envs = None, white = True, target = False, eps=0.1):
+    def predict_move_prob(self, envs = None, white = True, target = False, eps=0.01):
         if not white:
             for i,env in enumerate(envs):
                 fen = env.board.fen()
@@ -321,26 +326,24 @@ class DeepQ():
         else:
             full_pred = self.model.predict(inp)
 
-        preds = full_pred[1]+ 0.15
+        preds = full_pred[1]
         if white:
             q_value = full_pred[0]
         else : 
             q_value = -full_pred[0]
 
-        preds = preds * mask 
-
+        preds = (preds+eps) * mask 
         outs_m = []
         outs_p = []
         for c in range(preds.shape[0]):
             outs_m.append([])
             outs_p.append([])
 
-        indices = np.argwhere(preds>eps)
-        sums = [np.sum(outs_p[c]) for c in range(preds.shape[0])]
+        indices = np.argwhere(preds>0.)
+        sums = [np.sum(preds[c]) for c in range(preds.shape[0])]
         
         for c,i,j,k in indices:
             m = self.translate_policy_ind_move(i,j,k, env = envs[c])
-            
             if not white:
                 m = revert_prediction(m)
             outs_m[c].append(m)
@@ -383,48 +386,15 @@ class DeepQ():
 
         return move
 
-    def predict_move_to_play_MCTS(self,depth, env=None, n_iterations = 300, target = False, white = True,):
-
+    def predict_move_to_play_MCTS(self, env=None, n_iterations = 300, white = True,):
         if env == None:
             env = self.env
-        fen = env.board.fen()
-       
-        envs = []
-        for i in range(n_iterations):
-            envs.append(Chess_env(fen))
-        paths = []
-        dones = [False for i in range(n_iterations)]
-        q_val = [0] * n_iterations
-        for k in range(depth):
-            n_envs = []
-            for i in range(n_iterations):
-                n_envs.append(Chess_env(envs[i].board.fen()))
-            outs_m, outs_p, q_value = self.predict_move_prob(n_envs, Boolean((white+k)%2), target = target)
-            for i in range(n_iterations):
-                if not dones[i]:
-                    if not np.sum(outs_p[i]) == 0:
-                        m = np.random.choice(outs_m[i], p = outs_p[i])
-                    else:
-                        m = np.random.choice(list(envs[i].board.legal_moves))
-                        m=str(m)
-                    if k == 0:
-                        paths.append(m)
-                    _, _, done, _ = envs[i].step(m)
-                    dones[i] = done
-                    q_val[i] = q_value[i]
-        print(q_val, paths)
-        q_val = np.array(q_val).reshape(-1)
-        results = {m : [] for m in paths}
-        for m, q_v in zip(paths, q_val):
-            results[m].append(q_v)
-        print(results)
-        max_val = -np.inf
-        for m in results.keys():
-            val = np.mean(results[m])
-            if val > max_val:
-                move = m
-                max_val = val
-        return move
+        m = MCTS(self, env, {'num_simulations':n_iterations})
+        if white:
+            x = m.run(env.board_feat.board, 1)
+        else:
+            x = m.run(env.board_feat.board, -1)
+        return x.select_action(0)
 
     def train(
             self, 
@@ -436,11 +406,11 @@ class DeepQ():
             batch_size = 32,
             max_steps_per_episode = 100,
             learning_rate = 1e-2,
-            MCTS_depth = 4,
             MCTS_iterations = 300,
             update_target = 100,
             jupyter=True,
-            name='model'
+            name='model',
+            elo = 800
         ):
         """
         Max epochs : maximum number of errors
@@ -469,18 +439,17 @@ class DeepQ():
             "reward" : [],
             "target_move": []
         }
-
+        n_new_run = 0
 
         while self.episode_count<=max_epoch:  # Run until solved
             state,_ = env.reset()
+            n_new_run += 1
             
             batch['state'].append([])
             batch['target_move'].append([])
             batch['reward'].append(0)
-
-            print(f"Batch : {len(batch['state'])}/{batch_size}")
-            for _ in tqdm(range(1, max_steps_per_episode)):
-                
+            current_wins = 0
+            for _ in tqdm(range(1, max_steps_per_episode)):                
                 self.frame_count += 1
                 actions = env.get_possible_actions()
 
@@ -492,7 +461,7 @@ class DeepQ():
                 else:
                     # Predict action Q-values
                     # From environment state
-                    move = self.predict_move_to_play_MCTS(MCTS_depth, n_iterations=MCTS_iterations,)
+                    move = self.predict_move_to_play_MCTS(env= env, n_iterations= MCTS_iterations, white=True)
 
 
                 # Decay probability of taking random action
@@ -505,18 +474,22 @@ class DeepQ():
 
                 if not done:
                     actions = env.get_possible_actions()
-                    # move = IA_basic(env, white=False)
-                    if self.frame_count < epsilon_random_frames or epsilon > np.random.rand(1)[0]:
-                    # Take random action
-                        move = np.random.choice(actions)
-                    else:
-                        move = self.predict_move_to_play_MCTS(MCTS_depth, n_iterations=MCTS_iterations, target = True, white=False)
+
+                    stockfish_v_elo.set_elo_rating(elo)
+                    stockfish_v_elo.set_fen_position(env.board.fen())
+                    move = stockfish_v_elo.get_best_move()
+
                     state_next, reward, done, _ = env.step(move)    
                     if done:
                         print('Lost')
+                        print(current_wins/len(batch['reward']))
                         reward = -1
                 else:
                     print('Won')
+                    current_wins += 1
+                    reward = 1
+                    print(current_wins/len(batch['reward']))
+                    
 
 
                 batch['state'][-1].append(state)
@@ -528,7 +501,7 @@ class DeepQ():
                     break
 
 
-            if len(batch['reward']) >= batch_size:
+            if len(batch['reward']) >= batch_size and n_new_run%(batch_size//2) == 0:
                 state_sample = []
                 rewards_sample = []
                 target_move_sample = []
@@ -549,6 +522,7 @@ class DeepQ():
                 bs = state_sample.shape[0]
 
                 final_reward = tf.convert_to_tensor(rewards_sample)
+                # CHANGE TARGET TO BELLMAN EQU / Q_VALUE ....
 
                 with tf.GradientTape() as tape:
                     # Train the model on the states and updated Q-values
@@ -560,7 +534,6 @@ class DeepQ():
                     pred_move = tf.reshape(pred[1], (bs,-1))
                     target_move_sample_t = tf.reshape(target_move_sample_t, (bs,-1))
                     q_value = pred[0]
-
                     loss_v = loss_function_move(pred_move, target_move_sample_t)
                     loss_q = loss_function(final_reward, q_value)
 
@@ -574,11 +547,14 @@ class DeepQ():
                 loss_v = loss_v.numpy()
                 self.loss_v_history.append(np.mean(loss_v))
 
-                batch = {
-                            "state" : [],
-                            "reward" : [],
-                            "target_move": []
-                        }
+
+                if n_new_run>10*batch_size:
+                    batch = {
+                                "state" : [],
+                                "reward" : [],
+                                "target_move": []
+                            }
+                    n_new_run = 0
 
                 # Log details
                 template = "Episode {}, frame count {}"
@@ -595,11 +571,10 @@ class DeepQ():
                 axes[1].set_title('Value Loss')
 
                 plt.show()
-                
+
             self.episode_count += 1
                         # update the the target network with new weights
             if self.episode_count % update_target == 0:
-                print('Updated parameters')
                 self.target_model.set_weights(self.model.get_weights())
 
     def pre_train(
@@ -638,15 +613,15 @@ class DeepQ():
             "target_move": []
         }
 
-
+        n_new_run = 0
         while self.episode_count<=max_epoch:  # Run until solved
+            n_new_run += 1
             state,_ = env.reset()
             
             batch['state'].append([])
             batch['target_move'].append([])
             batch['reward'].append([])
 
-            print(f"Batch : {len(batch['state'])}/{batch_size}")
             for _ in tqdm(range(1, max_steps_per_episode)):
                 
                 self.frame_count += 1
@@ -674,10 +649,6 @@ class DeepQ():
                         stockfish.set_fen_position(env.board.fen())
                         move = stockfish.get_best_move()
                     state_next, _, done, _ = env.step(move)    
-                    if done:
-                        print('Lost')
-                else:
-                    print('Won')
 
                 batch['state'][-1].append(state)
                 batch['target_move'][-1].append(self.create_mask_output(best_moves))
@@ -689,12 +660,15 @@ class DeepQ():
                     break
 
 
-            if len(batch['reward']) >= batch_size:
+            if len(batch['reward']) >= batch_size and n_new_run%(batch_size//2) ==0:
                 state_sample = []
                 rewards_sample = []
                 target_move_sample = []
 
-                for i in range(batch_size):
+                ind_game = list(range(len(batch['state'])))
+                np.random.shuffle(ind_game)
+                ind_game = ind_game[:batch_size]
+                for i in ind_game:
                     indices = [k for k in range(len(batch['state'][i]))]
                     np.random.shuffle(indices)
                     indices = indices[:min(8, len(indices))]
@@ -724,7 +698,6 @@ class DeepQ():
 
                     loss_v = loss_function_move(pred_move, target_move_sample_t)
                     loss_q = loss_function(final_reward, q_value)
-                    print(loss_q.shape)
 
                     loss = loss_q + loss_v
                 # Backpropagation
@@ -735,12 +708,14 @@ class DeepQ():
                 self.loss_q_history.append(np.mean(loss_q))
                 loss_v = loss_v.numpy()
                 self.loss_v_history.append(np.mean(loss_v))
-
-                batch = {
-                            "state" : [],
-                            "reward" : [],
-                            "target_move": []
-                        }
+                n_new_run +=1
+                if n_new_run > batch_size*8:
+                    batch = {
+                                "state" : [],
+                                "reward" : [],
+                                "target_move": []
+                            }
+                    n_new_run = 0
 
                 # Log details
                 template = "Episode {}, frame count {}"
@@ -776,7 +751,6 @@ class DeepQ():
             self.episode_count += 1
                         # update the the target network with new weights
             if self.episode_count % update_target == 0:
-                print('Updated parameters')
                 self.target_model.set_weights(self.model.get_weights())
 
 
@@ -784,45 +758,3 @@ class DeepQ():
 
 
 
-
-
-
-def IA_basic(env, white=False):
-    l_moves = list(env.board.legal_moves)
-    if white:
-        reward = -np.inf
-    else:
-        reward = np.inf
-    move = ''
-    for m in l_moves:
-        n_env = Chess_env(env.board.fen())
-
-        _,r, done, _ = n_env.step(m)
-        fen_ = n_env.board.fen()
-        if done:
-            return m
-        b_m = ''
-        if white:
-            r_m = np.inf
-        else:
-            r_m = -np.inf
-
-        for m_ in n_env.board.legal_moves:
-            n_env = Chess_env(fen_)
-            _,r_,done_,_ = n_env.step(m_)
-
-            if white and r_ <= r_m:
-                r_m = r_
-                b_m = m
-            elif (not white) and r_ >= r_m:
-                r_m =  r_
-                b_m = m
-        if white and r_m >= reward:
-            reward = r_m
-            move = b_m
-        elif not white and r_m <= reward:
-            reward = r_m
-            move = b_m
-    return move
-        
-                    
