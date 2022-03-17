@@ -7,7 +7,7 @@ from game import *
 from stockfish import Stockfish
 
 
-stockfish = Stockfish(path="C:/Users/Philippe/Downloads/stockfish_13_win_x64_avx2/stockfish_13_win_x64_avx2")
+stockfish = Stockfish(path="stockfish_13_win_x64_avx2/stockfish_13_win_x64_avx2")
 
 class Chess_env(gym.Env):
     """Custom Environment that follows gym interface"""
