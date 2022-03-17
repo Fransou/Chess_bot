@@ -19,8 +19,7 @@ from IPython.display import clear_output
 from stockfish import Stockfish
 from mcts import *
 
-stockfish = Stockfish(path="C:/Users/Philippe/Downloads/stockfish_13_win_x64_avx2/stockfish_13_win_x64_avx2")
-stockfish_v_elo = Stockfish(path="C:/Users/Philippe/Downloads/stockfish_13_win_x64_avx2/stockfish_13_win_x64_avx2")
+stockfish_v_elo = Stockfish(path=STOCKFISH_PATH)
 
 
 
@@ -123,15 +122,14 @@ class DeepQ():
     def residual_block(self, x, n_channels):
         x_skip = x
         x = layers.Conv2D(n_channels,3, activation="linear",padding='same')(x)   
-        x = layers.BatchNormalization()(x)
         x = layers.Activation(keras.activations.relu)(x)
         x = layers.Dropout(rate=self.dropout_rate)(x)
 
-
         x = layers.Conv2D(n_channels,3, activation="linear",padding='same')(x)   
-        x = layers.BatchNormalization()(x)
         x = x + x_skip
         x = layers.Activation(keras.activations.relu)(x)
+        x = layers.BatchNormalization()(x)
+
         x = layers.Dropout(rate=self.dropout_rate)(x)
 
         return x
@@ -158,13 +156,12 @@ class DeepQ():
         out_policy = layers.Conv2D(256,1, activation="relu", padding='same')(x)
         out_policy = layers.Dropout(rate=self.dropout_rate)(out_policy)
         # 7 horizontal moves left and right, 7 vertical moves up and down, 7 diagonal NW, NE, SW, SE, 8 knight moves, 3 promotions
-        out_policy = layers.Conv2D(73,1, activation="softmax", padding='same')(x)
+        out_policy = layers.Conv2D(73,1, activation="softmax", padding='same')(out_policy)
 
         out = layers.Conv2D(1,1, activation="relu")(x)
         out = layers.Dropout(rate=self.dropout_rate)(out)
-        
         out = layers.Flatten()(out)
-        out = layers.Dense(1, activation="tanh")(out)
+        out = layers.Dense(1, activation="tanh", use_bias = False)(out)
 
         out = out
 
@@ -432,7 +429,7 @@ class DeepQ():
             epsilon - epsilon_min
         )  # Rate at which to reduce chance of random action being taken
 
-        loss_function = keras.losses.MSE
+        loss_function = tf.keras.losses.MeanSquaredError()
         loss_function_move = keras.losses.BinaryCrossentropy(reduction=tf.keras.losses.Reduction.NONE)
         batch = {
             "state" : [],
@@ -443,6 +440,7 @@ class DeepQ():
 
         while self.episode_count<=max_epoch:  # Run until solved
             state,_ = env.reset()
+            print(env.board)
             n_new_run += 1
             
             batch['state'].append([])
@@ -587,7 +585,9 @@ class DeepQ():
             random_best_action = 0.8,
             jupyter=True,
             n_top_move = 5,
-            name='model'
+            name='model',
+            length_train_set=256*2,
+            length_test_set = 64*2,
         ):
         """
         Max epochs : maximum number of errors
@@ -605,40 +605,37 @@ class DeepQ():
         env = self.env
         optimizer = keras.optimizers.SGD(learning_rate=learning_rate, clipnorm=1.0)
 
-        loss_function = keras.losses.MSE
+        loss_function = tf.keras.losses.MeanSquaredError()
         loss_function_move = keras.losses.BinaryCrossentropy(reduction=tf.keras.losses.Reduction.NONE)
-        batch = {
+
+
+        dataset_train = {
             "state" : [],
             "reward" : [],
             "target_move": []
         }
+        dataset_test = {
+            "state" : [],
+            "reward" : [],
+            "target_move": []
+        }
+        progress_bar = tqdm(range(length_train_set))
 
-        n_new_run = 0
-        while self.episode_count<=max_epoch:  # Run until solved
-            n_new_run += 1
+        while len(dataset_train['reward'])<length_train_set:
             state,_ = env.reset()
-            
-            batch['state'].append([])
-            batch['target_move'].append([])
-            batch['reward'].append([])
-
-            for _ in tqdm(range(1, max_steps_per_episode)):
-                
-                self.frame_count += 1
+            for _ in range(1, max_steps_per_episode):
                 actions = env.get_possible_actions()
+
+                stockfish.set_fen_position(env.board.fen())
+                reward = np.clip(stockfish.get_evaluation()['value']/500, -1, 1,)
+                best_moves = [s['Move'] for s in stockfish.get_top_moves(n_top_move)]
 
                 # Take random action
                 action = np.random.randint(0,len(actions))
                 move = actions[action]
-
-                # Apply the sampled action in our environment
                 action = str(move)
-                
-                stockfish.set_fen_position(env.board.fen())
-                reward = np.clip(stockfish.get_evaluation()['value']/500, -1, 1,)
-                best_moves = [s['Move'] for s in stockfish.get_top_moves(n_top_move)]
                 if np.random.random()<random_best_action:
-                    action = stockfish.get_best_move()
+                    action = stockfish.get_best_move_time(10)
 
                 state_next, _, done, _ = env.step(action)
 
@@ -647,35 +644,60 @@ class DeepQ():
                     move = np.random.choice(actions)
                     if np.random.random()<random_best_action:
                         stockfish.set_fen_position(env.board.fen())
-                        move = stockfish.get_best_move()
-                    state_next, _, done, _ = env.step(move)    
-
-                batch['state'][-1].append(state)
-                batch['target_move'][-1].append(self.create_mask_output(best_moves))
-                batch['reward'][-1].append(reward)
-
-                state = state_next
-                
+                        move = stockfish.get_best_move_time(10)
+                    state_next, _, done, _ = env.step(move) 
                 if done:
                     break
+                if np.random.random() < 0.2:   
+                    progress_bar.update(1)
+                    dataset_train['state'].append(state)
+                    dataset_train['target_move'].append(self.create_mask_output(best_moves))
+                    dataset_train['reward'].append(reward)
+                state = state_next
 
 
-            if len(batch['reward']) >= batch_size and n_new_run%(batch_size//2) ==0:
-                state_sample = []
-                rewards_sample = []
-                target_move_sample = []
+        progress_bar = tqdm(range(length_test_set))
+        while len(dataset_test['reward'])<length_test_set:
+            state,_ = env.reset()
+            for _ in range(1, max_steps_per_episode):
+                actions = env.get_possible_actions()
 
-                ind_game = list(range(len(batch['state'])))
-                np.random.shuffle(ind_game)
-                ind_game = ind_game[:batch_size]
-                for i in ind_game:
-                    indices = [k for k in range(len(batch['state'][i]))]
-                    np.random.shuffle(indices)
-                    indices = indices[:min(8, len(indices))]
+                stockfish.set_fen_position(env.board.fen())
+                reward = np.clip(stockfish.get_evaluation()['value']/500, -1, 1,)
+                best_moves = [s['Move'] for s in stockfish.get_top_moves(n_top_move)]
 
-                    state_sample += [batch['state'][i][j] for j in indices]
-                    target_move_sample += [batch['target_move'][i][j] for j in indices]
-                    rewards_sample += [batch['reward'][i][j] for j in indices]
+                # Take random action
+                action = np.random.randint(0,len(actions))
+                move = actions[action]
+                action = str(move)
+                if np.random.random()<random_best_action:
+                    action = stockfish.get_best_move_time(10)
+
+                state_next, _, done, _ = env.step(action)
+
+                if not done:
+                    actions = env.get_possible_actions()
+                    move = np.random.choice(actions)
+                    if np.random.random()<random_best_action:
+                        stockfish.set_fen_position(env.board.fen())
+                        move = stockfish.get_best_move_time(10)
+                    state_next, _, done, _ = env.step(move) 
+                if done:
+                    break
+                if np.random.random() < 0.05:   
+                    progress_bar.update(1)
+                    dataset_test['state'].append(state)
+                    dataset_test['target_move'].append(self.create_mask_output(best_moves))
+                    dataset_test['reward'].append(reward)
+                state = state_next
+
+
+        for _ in tqdm(range(max_epoch)):  # Run until solved
+            print(f"Running episode { self.episode_count}/{max_epoch}")
+            for idx in range(0,length_train_set, batch_size):
+                state_sample = dataset_train['state'][idx:idx+batch_size]
+                rewards_sample = dataset_train['reward'][idx:idx+batch_size]
+                target_move_sample = dataset_train['target_move'][idx:idx+batch_size]
                     
                 rewards_sample = np.array(rewards_sample)
                 target_move_sample = np.array(target_move_sample).astype('float32')
@@ -703,55 +725,50 @@ class DeepQ():
                 # Backpropagation
                 grads = tape.gradient(loss, self.model.trainable_variables)
                 optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
-                self.model.save(name)
+                
                 loss_q = loss_q.numpy()
                 self.loss_q_history.append(np.mean(loss_q))
                 loss_v = loss_v.numpy()
                 self.loss_v_history.append(np.mean(loss_v))
-                n_new_run +=1
-                if n_new_run > batch_size*8:
-                    batch = {
-                                "state" : [],
-                                "reward" : [],
-                                "target_move": []
-                            }
-                    n_new_run = 0
 
-                # Log details
-                template = "Episode {}, frame count {}"
-                print(template.format(self.episode_count,self.frame_count))
-                if jupyter:
-                    clear_output()
+            self.model.save(name)
+            if jupyter:
+                clear_output()
 
-                fig,axes = plt.subplots(1,2, figsize=(15,5))
+            fig,axes = plt.subplots(1,3, figsize=(15,5))
 
-                axes[0].plot(self.loss_q_history)
-                axes[0].set_title('Policy Loss')
+            axes[0].plot(self.loss_q_history)
+            axes[0].set_title('Policy Loss')
 
-                axes[1].plot(self.loss_v_history)
-                axes[1].set_title('Value Loss')
+            axes[1].plot(self.loss_v_history)
+            axes[1].set_title('Value Loss')
 
-                if len(self.loss_q_history)>20:
-                    axes[0].plot(
-                        np.arange(len(self.loss_q_history))[20:],
-                        np.mean(
-                            np.array([self.loss_q_history[i:-20+i] for i in range(20)]),
-                            axis = 0
-                            )
+            if len(self.loss_q_history)>20:
+                axes[0].plot(
+                    np.arange(len(self.loss_q_history))[20:],
+                    np.mean(
+                        np.array([self.loss_q_history[i:-20+i] for i in range(20)]),
+                        axis = 0
                         )
-                    axes[1].plot(
-                        np.arange(len(self.loss_v_history))[20:],
-                        np.mean(
-                            np.array([self.loss_v_history[i:-20+i] for i in range(20)]),
-                            axis = 0
-                            )
+                    )
+                axes[1].plot(
+                    np.arange(len(self.loss_v_history))[20:],
+                    np.mean(
+                        np.array([self.loss_v_history[i:-20+i] for i in range(20)]),
+                        axis = 0
                         )
-                plt.show()
-                
-            self.episode_count += 1
-                        # update the the target network with new weights
-            if self.episode_count % update_target == 0:
-                self.target_model.set_weights(self.model.get_weights())
+                    )
+
+            # axes[2].plot([-1,1],[-1,1])
+            
+            gt = final_reward.numpy()
+            ev = q_value.numpy()
+            for x,y in zip(gt,ev):
+                axes[2].scatter(x,y, color='r')
+            axes[2].set_xlabel("Ground Truth evaluation")
+            axes[2].set_ylabel("Model evaluation")
+            plt.show()
+            
 
 
 
