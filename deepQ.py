@@ -19,8 +19,7 @@ from IPython.display import clear_output
 from stockfish import Stockfish
 from mcts import *
 
-stockfish = Stockfish(path="stockfish_13_win_x64_avx2/stockfish_13_win_x64_avx2")
-stockfish_v_elo = Stockfish(path="stockfish_13_win_x64_avx2/stockfish_13_win_x64_avx2")
+stockfish_v_elo = Stockfish(path=STOCKFISH_PATH)
 
 
 
@@ -636,7 +635,7 @@ class DeepQ():
                 move = actions[action]
                 action = str(move)
                 if np.random.random()<random_best_action:
-                    action = stockfish.get_best_move()
+                    action = stockfish.get_best_move_time(10)
 
                 state_next, _, done, _ = env.step(action)
 
@@ -645,7 +644,7 @@ class DeepQ():
                     move = np.random.choice(actions)
                     if np.random.random()<random_best_action:
                         stockfish.set_fen_position(env.board.fen())
-                        move = stockfish.get_best_move()
+                        move = stockfish.get_best_move_time(10)
                     state_next, _, done, _ = env.step(move) 
                 if done:
                     break
@@ -672,7 +671,7 @@ class DeepQ():
                 move = actions[action]
                 action = str(move)
                 if np.random.random()<random_best_action:
-                    action = stockfish.get_best_move()
+                    action = stockfish.get_best_move_time(10)
 
                 state_next, _, done, _ = env.step(action)
 
@@ -681,7 +680,7 @@ class DeepQ():
                     move = np.random.choice(actions)
                     if np.random.random()<random_best_action:
                         stockfish.set_fen_position(env.board.fen())
-                        move = stockfish.get_best_move()
+                        move = stockfish.get_best_move_time(10)
                     state_next, _, done, _ = env.step(move) 
                 if done:
                     break

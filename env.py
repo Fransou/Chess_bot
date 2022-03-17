@@ -6,8 +6,8 @@ import chess
 from game import *
 from stockfish import Stockfish
 
-
-stockfish = Stockfish(path="stockfish_13_win_x64_avx2/stockfish_13_win_x64_avx2")
+STOCKFISH_PATH = "stockwin/stockfish_13_win_x64_avx2"
+stockfish = Stockfish(path=STOCKFISH_PATH)
 
 class Chess_env(gym.Env):
     """Custom Environment that follows gym interface"""
@@ -61,7 +61,7 @@ class Chess_env(gym.Env):
 
         while n_pieces > 6 or n_init_moves%2 == 1:
             stockfish.set_fen_position(self.board.fen())
-            move = stockfish.get_best_move()
+            move = stockfish.get_best_move_time(10)
             n_pieces = np.sum(self.board_feat.board[:,:,:12])
 
             _,_,done,_ = self.step(move)
