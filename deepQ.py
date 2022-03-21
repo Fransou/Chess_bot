@@ -18,6 +18,8 @@ from time import time
 from IPython.display import clear_output
 from stockfish import Stockfish
 from mcts import *
+import pandas as pd
+import seaborn as sns
 
 stockfish_v_elo = Stockfish(path=STOCKFISH_PATH)
 
@@ -383,10 +385,10 @@ class DeepQ():
 
         return move
 
-    def predict_move_to_play_MCTS(self, env=None, n_iterations = 300, white = True,):
+    def predict_move_to_play_MCTS(self, env=None, n_iterations = 300, white = True, noise = 0.3):
         if env == None:
             env = self.env
-        m = MCTS(self, env, {'num_simulations':n_iterations})
+        m = MCTS(self, env, noise, {'num_simulations':n_iterations})
         if white:
             x = m.run(env.board_feat.board, 1)
         else:
@@ -437,17 +439,22 @@ class DeepQ():
             "target_move": []
         }
         n_new_run = 0
-
+        df_results = pd.DataFrame({
+            "results" : [],
+            "step" : []
+        }
+        )
+        step = 0
         while self.episode_count<=max_epoch:  # Run until solved
             state,_ = env.reset()
-            print(env.board)
+            print("New game, with the following starting board : \n",env.board)
             n_new_run += 1
             
             batch['state'].append([])
             batch['target_move'].append([])
             batch['reward'].append(0)
-            current_wins = 0
-            for _ in tqdm(range(1, max_steps_per_episode)):                
+            
+            for i_ep in tqdm(range(1, max_steps_per_episode)):                
                 self.frame_count += 1
                 actions = env.get_possible_actions()
 
@@ -473,20 +480,31 @@ class DeepQ():
                 if not done:
                     actions = env.get_possible_actions()
 
-                    stockfish_v_elo.set_elo_rating(elo)
-                    stockfish_v_elo.set_fen_position(env.board.fen())
-                    move = stockfish_v_elo.get_best_move()
+                    # stockfish_v_elo.set_elo_rating(elo)
+                    # stockfish_v_elo.set_fen_position(env.board.fen())
+                    # move = stockfish_v_elo.get_best_move()
+
+                    move = self.predict_move_to_play_MCTS(env= env, n_iterations= MCTS_iterations, white=False)
 
                     state_next, reward, done, _ = env.step(move)    
                     if done:
-                        print('Lost')
-                        print(current_wins/len(batch['reward']))
-                        reward = -1
+                        df_results = pd.concat([df_results,
+                            pd.DataFrame({
+                                "results" : ["lost" for i in range(10)],
+                                "step" : [step + i for i in range(10)]
+                            })
+                        ],
+                        ignore_index=True
+                        )
                 else:
-                    print('Won')
-                    current_wins += 1
-                    reward = 1
-                    print(current_wins/len(batch['reward']))
+                    df_results = pd.concat([df_results,
+                        pd.DataFrame({
+                            "results" : ["won" for i in range(10)],
+                            "step" : [step + i for i in range(10)]
+                        })
+                    ],
+                    ignore_index=True
+                    )
                     
 
 
@@ -497,9 +515,19 @@ class DeepQ():
                 
                 if done:
                     break
+            if not done:
+                df_results = pd.concat([df_results,
+                    pd.DataFrame({
+                        "results" : ["draw" for i in range(10)],
+                        "step" : [step + i for i in range(10)]
+                    })
+                ],
+                ignore_index=True
+                )
 
 
             if len(batch['reward']) >= batch_size and n_new_run%(batch_size//2) == 0:
+                step += 1
                 state_sample = []
                 rewards_sample = []
                 target_move_sample = []
@@ -554,6 +582,8 @@ class DeepQ():
                             }
                     n_new_run = 0
 
+
+
                 # Log details
                 template = "Episode {}, frame count {}"
                 print(template.format(self.episode_count,self.frame_count))
@@ -569,6 +599,12 @@ class DeepQ():
                 axes[1].set_title('Value Loss')
 
                 plt.show()
+                plt.savefig('training_fig')
+
+                sns.histplot(df_results, x='step', hue='results', multiple='fill', palette="light:m_r",edgecolor=".3",linewidth=.5, stat = 'count', hue_order=['lost', 'draw', 'won'])
+                plt.show()
+                plt.savefig('training_preds')
+
 
             self.episode_count += 1
                         # update the the target network with new weights
@@ -586,8 +622,8 @@ class DeepQ():
             jupyter=True,
             n_top_move = 5,
             name='model',
-            length_train_set=256*2,
-            length_test_set = 64*2,
+            length_train_set=256*4,
+            length_test_set = 32*4,
         ):
         """
         Max epochs : maximum number of errors
@@ -737,7 +773,7 @@ class DeepQ():
 
             fig,axes = plt.subplots(1,3, figsize=(15,5))
 
-            axes[0].plot(self.loss_q_history)
+            axes[0].plot(self.loss_q_history, alpha=0.1)
             axes[0].set_title('Policy Loss')
 
             axes[1].plot(self.loss_v_history)
@@ -769,6 +805,8 @@ class DeepQ():
             axes[2].set_ylabel("Model evaluation")
             plt.show()
             
+
+            plt.savefig('pretraining_fig')
 
 
 

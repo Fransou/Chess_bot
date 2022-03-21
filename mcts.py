@@ -88,9 +88,10 @@ class Node:
 
 class MCTS:
 
-    def __init__(self, deepq, env, args):
+    def __init__(self, deepq, env, noise, args):
         self.game = Chess_env(env.board.fen())
         self.deepq = deepq
+        self.noise = noise
         self.args = args
 
     def run(self, state, to_play):
@@ -100,6 +101,9 @@ class MCTS:
         # EXPAND root
         outs_m, outs_p, value = self.deepq.predict_move_prob([self.game], white= bool(to_play == 1))
         outs_p[0] = [u.numpy() for u in outs_p[0]]
+
+        outs_p[0]= np.array(outs_p[0]) * 0.75 + 0.25 * np.random.dirichlet([self.noise] * int(len(outs_p[0])))
+
         action_probs = zip(outs_m[0], outs_p[0])
         root.expand(state, to_play, list(action_probs))
 
